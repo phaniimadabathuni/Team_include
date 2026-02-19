@@ -46,6 +46,27 @@ qtcreator-*
 
 # Emacs
 .#*
+# =========================
+# ROS CATKIN WORKSPACE IGNORES
+# =========================
+build/
+devel/
+install/
+logs/
+.catkin_workspace
+compile_commands.json
+CMakeCache.txt
+CMakeFiles/
+Makefile
+cmake_install.cmake
 
+# =========================
+# PYTHON & IDE IGNORES
+# =========================
+__pycache__/
+*.py[cod]
+.vscode/
+.idea/
+*.swp
 # Catkin custom files
 CATKIN_IGNORE
