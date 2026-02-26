@@ -33,17 +33,22 @@ class DroneEKF:
         F[1, 4] = dt  # Y = Y + Vy*dt
         F[2, 5] = dt  # Z = Z + Vz*dt
         
-        # Control Input Matrix (B) and vector (u)
-        B = np.zeros((6, 1))
+        # CORRECTED: Control Input Matrix (B) - Maps 3D acceleration to 6D state
+        B = np.zeros((6, 3))
+        # Position += 0.5 * a * dt^2
+        B[0, 0] = 0.5 * dt**2
+        B[1, 1] = 0.5 * dt**2
+        B[2, 2] = 0.5 * dt**2
+        # Velocity += a * dt
         B[3, 0] = dt
-        B[4, 0] = dt
-        B[5, 0] = dt
+        B[4, 1] = dt
+        B[5, 2] = dt
         
-        # Remove gravity from Z acceleration
+        # CORRECTED: Control Input Vector (u) - [ax, ay, az]
         a_z_true = accel_z - self.gravity
-        u = np.array([[0], [0], [a_z_true]])
+        u = np.array([[0.0], [0.0], [a_z_true]])
         
-        # 1. Predict State
+        # 1. Predict State (The math will now align perfectly: 6x3 multiplied by 3x1 = 6x1)
         self.x = np.dot(F, self.x) + np.dot(B, u)
         
         # 2. Predict Covariance (Uncertainty grows)
