@@ -1,0 +1,31 @@
+# ---------------------------------------------------
+# Team #include - VI-SLAM .gitignore
+# ---------------------------------------------------
+
+# 1. Ignore ALL massive datasets and temporary downloads
+datasets/
+*.zip
+*.tar.gz
+*.crdownload
+*.csv
+*.bag
+*.mcap
+
+# 2. Ignore Python Cache and Virtual Environments
+__pycache__/
+*.py[cod]
+*~
+.venv/
+env/
+drone_slam/
+
+# 3. Ignore IDE and System files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 4. Ignore ROS 2 Build/Install folders (for later use)
+build/
+install/
+log/
