@@ -17,29 +17,31 @@ To develop a fully autonomous drone capable of indoor navigation without GPS, ut
 2. Push your code: `git push origin feature/your-name-task`
 3. Open a **Pull Request** and tag Phani for review.
 
-**Project Organizing Structure:**
 
+
+## Project Structure
+```text
 DRONE_SLAM/
-├── dataset/                 # The physical data
-│   └── mav0/                #  EuRoC extracted machine hall data
-├── data_loaders/           # Scripts that handle loading and syncing data
+├── dataset/           # Physical data
+│   └── mav0/          # EuRoC extracted machine hall data
+├── data_loaders/      # Scripts for data loading and syncing
 │   ├── dataset_player.py
 │   └── sync_test.py
-├── perception/                  #Cameras
+├── perception/        # Camera modules
 │   ├── orb_tracker.py
 │   ├── stereo_depth.py
 │   └── vision_test.py
-├── imu/                     # Inertial Measurement Domain
+├── imu/               # Inertial Measurement Unit
 │   ├── imu_integrator.py
 │   └── imu_plotter.py
-├── planning/              # Map & Path
+├── planning/          # Map & Path planning
 │   ├── occupancy_mapper.py
 │   └── path_planner.py
-├── localization/                  # SLAM 
+├── localization/      # SLAM algorithms
 │   └── slam_ekf.py
-├── flight_control/                # Physical Drone Control)
+├── flight_control/    # Physical Drone Control
 │   └── gps_denied_flight.py
-├── run_sensor_fusion.py     # main file
+├── run_sensor_fusion.py # main file
 ├── README.md
 ├── .gitignore
 └── LICENSE
