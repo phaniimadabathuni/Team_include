@@ -1,79 +1,88 @@
-import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from slam_ekf import DroneEKF
+import time
 
-def run_fusion():
-    print("Initializing Team #include V-I SLAM Engine...")
+# THE GREAT HANDOFF: Importing Team #include's Modules
+from slam_ekf import DroneEKF
+from path_planner import a_star_search
+
+def run_master_integration():
+    print("Initializing Team #include Master Integration Node...")
     
-    # Load your EuRoC IMU Data
-    imu_csv = r"C:\Users\phani\Drone_SLAM\mav0\imu0\data.csv"
-    df = pd.read_csv(imu_csv)
-    timestamps = df.iloc[:, 0].values
-    accel_z = df.iloc[:, 3].values  
-    
-    # 1. Initialize Your Brain
+    # 1. Initialize Phani's Domain (The EKF Brain)
     ekf = DroneEKF()
     
-    # Arrays to store data for the graph
-    time_history = []
-    raw_imu_z = []
-    ekf_fused_z = []
+    # 2. Simulate Radha's Domain (The Map)
+    # Note: In the future, this will be imported directly from her file 
+    # via something like: map_grid = occupancy_mapper.get_live_map()
+    grid_size = 20
+    map_grid = np.zeros((grid_size, grid_size))
+    map_grid[5:15, 8:12] = 1  # The solid wall obstacle
     
-    # Variables for the "dumb" raw IMU calculation
-    raw_pos = 0.0
-    raw_vel = 0.0
-    gravity = 9.81
+    # Mission Parameters
+    start_pos = (2, 2)
+    goal_pos = (18, 18)
     
-    print("Fusing IMU (200Hz) and Vision (20Hz)...")
+    print("EKF Brain online. Map loaded. Mission parameters set.")
     
-    # The Master Loop
-    for i in range(1, len(timestamps)):
-        dt = (timestamps[i] - timestamps[i-1]) / 1e9
-        time_sec = (timestamps[i] - timestamps[0]) / 1e9
-        
-        # --- THE CONTROL GROUP (Raw Physics) ---
-        a_z_true = accel_z[i] - gravity
-        raw_pos = raw_pos + (raw_vel * dt) + (0.5 * a_z_true * dt**2)
-        raw_vel = raw_vel + (a_z_true * dt)
-        
-        # --- THE EKF BRAIN (Sensor Fusion) ---
-        # Step 1: Predict via IMU
-        ekf.predict(accel_z[i], dt)
-        
-        # Step 2: Update via Vision (Simulated 20Hz update)
-        if i % 10 == 0:
-            # We simulate the camera seeing the drone hovering perfectly at 1.0 meter
-            simulated_vision_altitude = 1.0 
-            ekf.update(simulated_vision_altitude)
-            
-        # Record the results
-        time_history.append(time_sec)
-        raw_imu_z.append(raw_pos)
-        ekf_fused_z.append(ekf.x[2, 0]) # Index 2 is the Z-axis
+    # 3. Revanth's Domain: Calculate the global path around Radha's wall
+    print("Asking Revanth's A* Engine for a flight path...")
+    global_path = a_star_search(map_grid, start_pos, goal_pos)
+    
+    if not global_path:
+        print("MISSION ABORT: No valid path found.")
+        return
 
-    print("Processing complete. Rendering telemetry...")
-
-    # Plot the showdown
-    plt.figure(figsize=(10, 6))
+    print("Path secured! Engaging EKF Flight Loop...")
     
-    # Plot the raw, failing IMU
-    plt.plot(time_history, raw_imu_z, label="Raw IMU (Mathematical Drift)", color='red', linestyle='dashed')
+    # Setup live visualization (The Command Center Radar)
+    plt.figure(figsize=(8, 8))
+    plt.ion() # Turn on interactive mode to animate the drone flying
     
-    # Plot the EKF
-    plt.plot(time_history, ekf_fused_z, label="EKF Fused Altitude (Stable)", color='green', linewidth=2.5)
+    # Memory to draw the trail of where the drone has actually flown
+    ekf_x_history = []
+    ekf_y_history = []
     
-    plt.title("Sensor Fusion Showdown: EKF vs Raw IMU")
-    plt.xlabel("Time (seconds)")
-    plt.ylabel("Altitude (meters)")
-    
-    # We zoom the graph in to the top 2 meters. 
-    # The red line will literally shoot off the bottom of the screen into the abyss!
-    plt.ylim(-1, 2.5) 
-    
-    plt.grid(True)
-    plt.legend()
+    # 4. THE MASTER LOOP: Fly the drone along the path
+    for target_node in global_path:
+        
+        # We feed the EKF simulated acceleration data to step it forward
+        # In the real lab, dataset_player.py will feed the raw IMU data here
+        ekf.predict(accel_z=9.81, dt=0.1) 
+        
+        # For this integration test, we lock the EKF position to Revanth's path
+        ekf.x[0, 0] = target_node[1] # X coordinate
+        ekf.x[1, 0] = target_node[0] # Y coordinate
+        
+        ekf_x_history.append(ekf.x[0, 0])
+        ekf_y_history.append(ekf.x[1, 0])
+        
+        # Update the live radar screen
+        plt.clf() 
+        plt.imshow(map_grid, cmap='binary', origin='lower')
+        
+        # Draw Revanth's planned route (Dashed Blue Line)
+        route_y = [p[0] for p in global_path]
+        route_x = [p[1] for p in global_path]
+        plt.plot(route_x, route_y, 'b--', alpha=0.3, label="Revanth's Planned Route")
+        
+        # Draw Phani's actual EKF tracked flight (Solid Green Line)
+        plt.plot(ekf_x_history, ekf_y_history, 'g-', linewidth=3, label="Phani's EKF Actual Flight")
+        
+        # Draw the Drone itself (Red Dot)
+        plt.plot(ekf.x[0, 0], ekf.x[1, 0], 'ro', markersize=8, label="Drone Live Location")
+        
+        plt.title("Team #include: Master Sensor Fusion & Navigation Loop")
+        plt.xlim(0, 19)
+        plt.ylim(0, 19)
+        plt.legend(loc="lower right")
+        
+        # Pause for a fraction of a second to animate the flight visually
+        plt.pause(0.1) 
+        
+    plt.ioff()
+    print("Target Reached. Master Loop execution successful.")
     plt.show()
 
 if __name__ == "__main__":
-    run_fusion()
+    run_master_integration()
