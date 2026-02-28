@@ -28,4 +28,5 @@ Thumbs.db
 # 4. Ignore ROS 2 Build/Install folders (for later use)
 build/
 install/
-log/
+log/dataset/ 
+dataset/
