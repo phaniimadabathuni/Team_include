@@ -1,121 +1,135 @@
-import cv2
-import numpy as np
-import matplotlib.pyplot as plt
-import heapq
-import os
+#!/usr/bin/env python
+import rospy
+import math
+from nav_msgs.msg import Odometry, OccupancyGrid, Path
+from geometry_msgs.msg import PoseStamped
 
-# --- KEEP YOUR EXISTING a_star_search AND heuristic FUNCTIONS HERE ---
-def heuristic(a, b):
-    return np.sqrt((b[0] - a[0])**2 + (b[1] - a[1])**2)
-
-def a_star_search(grid, start, goal):
-    neighbors = [(0,1),(0,-1),(1,0),(-1,0),(1,1),(1,-1),(-1,1),(-1,-1)]
-    close_set = set()
-    came_from = {}
-    gscore = {start: 0}
-    fscore = {start: heuristic(start, goal)}
-    oheap = []
-    heapq.heappush(oheap, (fscore[start], start))
-    
-    while oheap:
-        current = heapq.heappop(oheap)[1]
+class AutonomousPathPlanner:
+    def __init__(self):
+        rospy.init_node('team_include_path_planner', anonymous=True)
         
-        if current == goal:
-            path = []
-            while current in came_from:
-                path.append(current)
-                current = came_from[current]
-            path.append(start)
-            return path[::-1]
-            
-        close_set.add(current)
+        # 1. State Variables
+        self.current_pose = None
+        self.target_goal = None
+        self.obstacle_map = None
+
+        # 2. Subscribers (Listening to the Environment)
+        # Listening to VINS-Fusion for exact location
+        rospy.Subscriber('/vins_estimator/odometry', Odometry, self.vins_callback)
+        # Listening to the target destination (e.g., from your ground station)
+        rospy.Subscriber('/team_include/mission_goal', PoseStamped, self.goal_callback)
+        # Listening to the 2D obstacle map (from RealSense depth data)
+        rospy.Subscriber('/map', OccupancyGrid, self.map_callback)
+
+        # 3. Publisher (Broadcasting the Route)
+        self.path_pub = rospy.Publisher('/team_include/planned_path', Path, queue_size=1)
         
-        for i, j in neighbors:
-            neighbor = current[0] + i, current[1] + j
-            if 0 <= neighbor[0] < grid.shape[0] and 0 <= neighbor[1] < grid.shape[1]:
-                if grid[neighbor[0]][neighbor[1]] == 1:
-                    continue
-            else:
-                continue
-                
-            move_cost = np.sqrt(i**2 + j**2)
-            tentative_g_score = gscore[current] + move_cost
-            
-            if neighbor in close_set and tentative_g_score >= gscore.get(neighbor, 0):
-                continue
-                
-            if tentative_g_score < gscore.get(neighbor, 0) or neighbor not in [i[1] for i in oheap]:
-                came_from[neighbor] = current
-                gscore[neighbor] = tentative_g_score
-                fscore[neighbor] = tentative_g_score + heuristic(neighbor, goal)
-                heapq.heappush(oheap, (fscore[neighbor], neighbor))
-                
-    return False
+        print("Team_include: Path Planner initialized. Waiting for VINS and Mission Goal...")
 
-# --- THE ULTIMATE 3D INTEGRATION ---
-def run_true_3d_planner():
-    print("Initializing Team #include True 3D Navigation Engine...")
-    
-    # 1. Load the Stereo Eyes
-    path_left = r"C:\Users\phani\Drone_SLAM\mav0\cam0\data"
-    path_right = r"C:\Users\phani\Drone_SLAM\mav0\cam1\data"
-    
-    left_files = sorted([f for f in os.listdir(path_left) if f.endswith('.png')])
-    right_files = sorted([f for f in os.listdir(path_right) if f.endswith('.png')])
-    
-    img_L = cv2.imread(os.path.join(path_left, left_files[500]), cv2.IMREAD_GRAYSCALE)
-    img_R = cv2.imread(os.path.join(path_right, right_files[500]), cv2.IMREAD_GRAYSCALE)
-    
-    # 2. Compute SGBM Depth
-    stereo = cv2.StereoSGBM_create(minDisparity=0, numDisparities=64, blockSize=5,
-                                   P1=8 * 3 * 25, P2=32 * 3 * 25, disp12MaxDiff=1,
-                                   uniquenessRatio=10, speckleWindowSize=100, speckleRange=32)
-    
-    disparity = stereo.compute(img_L, img_R).astype(np.float32) / 16.0
-    disparity[disparity <= 0] = 0.1 
-    disparity_normalized = cv2.normalize(disparity, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-    
-    # 3. Downsample for Navigation Grid
-    grid_width = 80
-    grid_height = 50
-    small_depth_map = cv2.resize(disparity_normalized, (grid_width, grid_height))
-    
-    # 4. DEPTH THRESHOLDING: Create the Obstacle Matrix
-    # Any pixel brighter than 110 (physically close to the drone) becomes a solid wall (1).
-    # Everything else (far away) becomes safe air (0).
-    _, binary_grid = cv2.threshold(small_depth_map, 110, 1, cv2.THRESH_BINARY)
-    
-    # 5. Set Mission Parameters
-    start_pos = (5, 5) 
-    goal_pos = (grid_height - 5, grid_width - 10) 
-    
-    # Clear the helipads to ensure we don't spawn inside a wall
-    binary_grid[start_pos[0]-2:start_pos[0]+3, start_pos[1]-2:start_pos[1]+3] = 0
-    binary_grid[goal_pos[0]-2:goal_pos[0]+3, goal_pos[1]-2:goal_pos[1]+3] = 0
+    def vins_callback(self, msg):
+        self.current_pose = msg.pose.pose
 
-    print("Running A* algorithm on solid 3D depth data...")
-    path = a_star_search(binary_grid, start_pos, goal_pos)
+    def goal_callback(self, msg):
+        self.target_goal = msg.pose
+        print("New mission goal received! Calculating route...")
+        self.calculate_astar_path()
 
-    # 6. Visualize the Victory
-    plt.figure(figsize=(10, 6))
-    
-    # Show the 3D Depth Occupancy Grid
-    plt.imshow(binary_grid, cmap='binary')
-    
-    plt.plot(start_pos[1], start_pos[0], 'go', markersize=10, label="Drone Start")
-    plt.plot(goal_pos[1], goal_pos[0], 'ro', markersize=10, label="Target Goal")
-    
-    if path:
-        print("Route successfully calculated through 3D space!")
-        route_y = [p[0] for p in path]
-        route_x = [p[1] for p in path]
-        plt.plot(route_x, route_y, 'b-', linewidth=3, label="A* Flight Path")
-    else:
-        print("Mission Abort: No safe path available.")
+    def map_callback(self, msg):
+        self.obstacle_map = msg
+
+    def calculate_astar_path(self):
+        if not self.current_pose or not self.target_goal or not self.obstacle_map:
+            rospy.logwarn("Missing VINS data, Goal, or Map. Cannot plan path.")
+            return
+
+        print("Calculating optimal A* route...")
+
+        # 1. Define the grid resolution and size based on your OccupancyGrid
+        resolution = self.obstacle_map.info.resolution
+        origin_x = self.obstacle_map.info.origin.position.x
+        origin_y = self.obstacle_map.info.origin.position.y
+        width = self.obstacle_map.info.width
+
+        # Helper function to convert real-world (X,Y) to Grid (Col, Row)
+        def world_to_grid(x, y):
+            grid_x = int((x - origin_x) / resolution)
+            grid_y = int((y - origin_y) / resolution)
+            return (grid_x, grid_y)
+
+        # Helper function to convert Grid (Col, Row) back to real-world (X,Y)
+        def grid_to_world(grid_x, grid_y):
+            x = (grid_x * resolution) + origin_x
+            y = (grid_y * resolution) + origin_y
+            return (x, y)
+
+        start_grid = world_to_grid(self.current_pose.position.x, self.current_pose.position.y)
+        goal_grid = world_to_grid(self.target_goal.position.x, self.target_goal.position.y)
+
+        # 2. The A* Algorithm Setup
+        open_set = {start_grid}
+        came_from = {}
         
-    plt.title("Master Integration: 3D Stereo Depth + A* Navigation")
-    plt.legend(loc="upper right")
-    plt.show()
+        # g_score: Cost from start to current node
+        g_score = {start_grid: 0}
+        
+        # Helper: Calculate distance (heuristic)
+        def heuristic(a, b):
+            return math.sqrt((b[0] - a[0])**2 + (b[1] - a[1])**2)
 
-if __name__ == "__main__":
-    run_true_3d_planner()
+        # f_score: g_score + heuristic (estimated total cost)
+        f_score = {start_grid: heuristic(start_grid, goal_grid)}
+
+        safe_route = Path()
+        safe_route.header.stamp = rospy.Time.now()
+        safe_route.header.frame_id = "map"
+
+        # 3. The Search Loop
+        while open_set:
+            # Get the node in open_set with the lowest f_score
+            current = min(open_set, key=lambda o: f_score.get(o, float('inf')))
+
+            if current == goal_grid:
+                # We found the target! Reconstruct the path backwards
+                path_waypoints = []
+                while current in came_from:
+                    path_waypoints.append(current)
+                    current = came_from[current]
+                
+                # Reverse the list so it goes from Start to Goal
+                path_waypoints.reverse()
+
+                # Convert grid points back to real-world coordinates for the Pixhawk
+                for wp in path_waypoints:
+                    pose = PoseStamped()
+                    world_x, world_y = grid_to_world(wp[0], wp[1])
+                    pose.pose.position.x = world_x
+                    pose.pose.position.y = world_y
+                    safe_route.poses.append(pose)
+                
+                self.path_pub.publish(safe_route)
+                print(f"Path published! {len(safe_route.poses)} waypoints generated.")
+                return
+
+            open_set.remove(current)
+
+            # Check all 8 neighbors (up, down, left, right, diagonals)
+            for dx, dy in [(0,1), (1,0), (0,-1), (-1,0), (1,1), (-1,-1), (1,-1), (-1,1)]:
+                neighbor = (current[0] + dx, current[1] + dy)
+                
+                # Check if neighbor is an obstacle (Value > 50 in ROS OccupancyGrid)
+                # Ensure we don't check outside the map boundaries
+                map_index = neighbor[1] * width + neighbor[0]
+                if map_index < 0 or map_index >= len(self.obstacle_map.data) or self.obstacle_map.data[map_index] > 50:
+                    continue # It's a wall, ignore this neighbor
+
+                tentative_g_score = g_score[current] + heuristic(current, neighbor)
+
+                if tentative_g_score < g_score.get(neighbor, float('inf')):
+                    # This path to neighbor is better than any previous one
+                    came_from[neighbor] = current
+                    g_score[neighbor] = tentative_g_score
+                    f_score[neighbor] = g_score[neighbor] + heuristic(neighbor, goal_grid)
+                    if neighbor not in open_set:
+                        open_set.add(neighbor)
+
+        rospy.logwarn("A* Search failed to find a path to the goal. Drone holding position.")
