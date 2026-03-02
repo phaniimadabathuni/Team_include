@@ -1,66 +1,58 @@
-import time
-from dronekit import connect, VehicleMode
+#!/usr/bin/env python
+import rospy
+from nav_msgs.msg import Path
+from geometry_msgs.msg import TwistStamped
+from mavros_msgs.srv import SetMode, CommandBool
 
-def run_gps_denied_flight():
-    print("Initializing Durga's Domain: GPS-Denied Autonomous Flight")
-    
-    # 1. Connect without waiting for GPS Home Location (wait_ready=False is crucial here!)
-    connection_string = 'COM3' 
-    print(f"Connecting to Pixhawk on: {connection_string}")
-    
-    try:
-        vehicle = connect(connection_string, baud=57600, wait_ready=False)
-        vehicle.parameters.wait_ready(timeout=10) # Wait for basic params, ignore GPS
-    except Exception as e:
-        print(f"Connection failed: {e}")
-        return
+class GPSDeniedFlightController:
+    def __init__(self):
+        rospy.init_node('team_include_flight_control', anonymous=True)
 
-    # 2. Force ALT_HOLD Mode (Relies only on Barometer and IMU)
-    print("Switching to ALT_HOLD mode...")
-    vehicle.mode = VehicleMode("ALT_HOLD")
-    while not vehicle.mode.name == 'ALT_HOLD':
-        time.sleep(1)
+        # 1. Subscriber: Listening to our custom Path Planner
+        rospy.Subscriber('/team_include/planned_path', Path, self.path_callback)
 
-    # 3. Force Arming
-    print("Arming motors without GPS...")
-    vehicle.armed = True
-    while not vehicle.armed:
-        print(" Waiting for arming... (Sensors Team: Ensure ARMING_CHECK is set to 0 in Mission Planner!)")
-        time.sleep(1)
+        # 2. Publisher: Sending physical velocity commands to the Pixhawk via MAVROS
+        self.velocity_pub = rospy.Publisher('/mavros/setpoint_velocity/cmd_vel', TwistStamped, queue_size=10)
 
-    print("MOTORS ARMED. Stand clear.")
-    time.sleep(2) # Give motors a second to idle
+        # 3. State Variables
+        self.current_path = None
+        self.rate = rospy.Rate(20) # We must send commands at 20Hz or ArduPilot will trigger a failsafe
 
-    # 4. RC Override Takeoff (Simulating pushing the Throttle stick up)
-    # Channel 3 is Throttle. 1500 is middle, 2000 is max.
-    print("Applying 70% Throttle for takeoff...")
-    vehicle.channels.overrides['3'] = 1700 
-    
-    # Climb for exactly 3 seconds
-    time.sleep(3) 
+        print("Team_include: Flight Controller online. Waiting for safe route...")
 
-    # 5. RC Override Hover (Simulating releasing the stick to the middle)
-    print("Centering Throttle. Barometer holding altitude...")
-    vehicle.channels.overrides['3'] = 1500 
-    
-    # Hover for 8 seconds
-    time.sleep(8)
+    def path_callback(self, msg):
+        self.current_path = msg.poses
+        print(f"Received route with {len(self.current_path)} waypoints. Engaging motors...")
+        self.execute_flight()
 
-    # 6. Barometric Landing
-    print("Initiating Barometric Landing Sequence...")
-    # Releasing the RC overrides
-    vehicle.channels.overrides = {} 
-    
-    # Switch to LAND mode. Pixhawk uses the barometer to descend safely and auto-disarm.
-    vehicle.mode = VehicleMode("LAND")
+    def execute_flight(self):
+        if not self.current_path:
+            return
 
-    while vehicle.armed:
-        print(" Descending...")
-        time.sleep(1)
+        # Grab the immediate next waypoint on the route
+        next_target = self.current_path[0].pose.position
+
+        # ==========================================
+        # TODO: Insert your PID Control Logic here!
+        # Compare current VINS position to next_target, 
+        # and calculate how fast to move in X, Y, and Z.
+        # ==========================================
+
+        cmd = TwistStamped()
         
-    print("Touchdown confirmed. Motors disarmed.")
-    vehicle.close()
-    print("GPS-Denied Mission Complete.")
+        # Example: Move forward at 0.5 meters per second
+        cmd.twist.linear.x = 0.5 
+        cmd.twist.linear.y = 0.0
+        cmd.twist.linear.z = 0.0 # Maintain altitude
+        
+        # Keep publishing the velocity command to keep the drone moving
+        while not rospy.is_shutdown():
+            self.velocity_pub.publish(cmd)
+            self.rate.sleep()
 
-if __name__ == "__main__":
-    run_gps_denied_flight()
+if __name__ == '__main__':
+    try:
+        flight_controller = GPSDeniedFlightController()
+        rospy.spin()
+    except rospy.ROSInterruptException:
+        pass

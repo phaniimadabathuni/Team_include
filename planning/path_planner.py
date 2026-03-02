@@ -1,121 +1,72 @@
-import cv2
-import numpy as np
-import matplotlib.pyplot as plt
-import heapq
-import os
+#!/usr/bin/env python
+import rospy
+import math
+from nav_msgs.msg import Odometry, OccupancyGrid, Path
+from geometry_msgs.msg import PoseStamped
 
-# --- KEEP YOUR EXISTING a_star_search AND heuristic FUNCTIONS HERE ---
-def heuristic(a, b):
-    return np.sqrt((b[0] - a[0])**2 + (b[1] - a[1])**2)
-
-def a_star_search(grid, start, goal):
-    neighbors = [(0,1),(0,-1),(1,0),(-1,0),(1,1),(1,-1),(-1,1),(-1,-1)]
-    close_set = set()
-    came_from = {}
-    gscore = {start: 0}
-    fscore = {start: heuristic(start, goal)}
-    oheap = []
-    heapq.heappush(oheap, (fscore[start], start))
-    
-    while oheap:
-        current = heapq.heappop(oheap)[1]
+class AutonomousPathPlanner:
+    def __init__(self):
+        rospy.init_node('team_include_path_planner', anonymous=True)
         
-        if current == goal:
-            path = []
-            while current in came_from:
-                path.append(current)
-                current = came_from[current]
-            path.append(start)
-            return path[::-1]
-            
-        close_set.add(current)
+        # 1. State Variables
+        self.current_pose = None
+        self.target_goal = None
+        self.obstacle_map = None
+
+        # 2. Subscribers (Listening to the Environment)
+        # Listening to VINS-Fusion for exact location
+        rospy.Subscriber('/vins_estimator/odometry', Odometry, self.vins_callback)
+        # Listening to the target destination (e.g., from your ground station)
+        rospy.Subscriber('/team_include/mission_goal', PoseStamped, self.goal_callback)
+        # Listening to the 2D obstacle map (from RealSense depth data)
+        rospy.Subscriber('/map', OccupancyGrid, self.map_callback)
+
+        # 3. Publisher (Broadcasting the Route)
+        self.path_pub = rospy.Publisher('/team_include/planned_path', Path, queue_size=1)
         
-        for i, j in neighbors:
-            neighbor = current[0] + i, current[1] + j
-            if 0 <= neighbor[0] < grid.shape[0] and 0 <= neighbor[1] < grid.shape[1]:
-                if grid[neighbor[0]][neighbor[1]] == 1:
-                    continue
-            else:
-                continue
-                
-            move_cost = np.sqrt(i**2 + j**2)
-            tentative_g_score = gscore[current] + move_cost
-            
-            if neighbor in close_set and tentative_g_score >= gscore.get(neighbor, 0):
-                continue
-                
-            if tentative_g_score < gscore.get(neighbor, 0) or neighbor not in [i[1] for i in oheap]:
-                came_from[neighbor] = current
-                gscore[neighbor] = tentative_g_score
-                fscore[neighbor] = tentative_g_score + heuristic(neighbor, goal)
-                heapq.heappush(oheap, (fscore[neighbor], neighbor))
-                
-    return False
+        print("Team_include: Path Planner initialized. Waiting for VINS and Mission Goal...")
 
-# --- THE ULTIMATE 3D INTEGRATION ---
-def run_true_3d_planner():
-    print("Initializing Team #include True 3D Navigation Engine...")
-    
-    # 1. Load the Stereo Eyes
-    path_left = r"C:\Users\phani\Drone_SLAM\mav0\cam0\data"
-    path_right = r"C:\Users\phani\Drone_SLAM\mav0\cam1\data"
-    
-    left_files = sorted([f for f in os.listdir(path_left) if f.endswith('.png')])
-    right_files = sorted([f for f in os.listdir(path_right) if f.endswith('.png')])
-    
-    img_L = cv2.imread(os.path.join(path_left, left_files[500]), cv2.IMREAD_GRAYSCALE)
-    img_R = cv2.imread(os.path.join(path_right, right_files[500]), cv2.IMREAD_GRAYSCALE)
-    
-    # 2. Compute SGBM Depth
-    stereo = cv2.StereoSGBM_create(minDisparity=0, numDisparities=64, blockSize=5,
-                                   P1=8 * 3 * 25, P2=32 * 3 * 25, disp12MaxDiff=1,
-                                   uniquenessRatio=10, speckleWindowSize=100, speckleRange=32)
-    
-    disparity = stereo.compute(img_L, img_R).astype(np.float32) / 16.0
-    disparity[disparity <= 0] = 0.1 
-    disparity_normalized = cv2.normalize(disparity, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-    
-    # 3. Downsample for Navigation Grid
-    grid_width = 80
-    grid_height = 50
-    small_depth_map = cv2.resize(disparity_normalized, (grid_width, grid_height))
-    
-    # 4. DEPTH THRESHOLDING: Create the Obstacle Matrix
-    # Any pixel brighter than 110 (physically close to the drone) becomes a solid wall (1).
-    # Everything else (far away) becomes safe air (0).
-    _, binary_grid = cv2.threshold(small_depth_map, 110, 1, cv2.THRESH_BINARY)
-    
-    # 5. Set Mission Parameters
-    start_pos = (5, 5) 
-    goal_pos = (grid_height - 5, grid_width - 10) 
-    
-    # Clear the helipads to ensure we don't spawn inside a wall
-    binary_grid[start_pos[0]-2:start_pos[0]+3, start_pos[1]-2:start_pos[1]+3] = 0
-    binary_grid[goal_pos[0]-2:goal_pos[0]+3, goal_pos[1]-2:goal_pos[1]+3] = 0
+    def vins_callback(self, msg):
+        self.current_pose = msg.pose.pose
 
-    print("Running A* algorithm on solid 3D depth data...")
-    path = a_star_search(binary_grid, start_pos, goal_pos)
+    def goal_callback(self, msg):
+        self.target_goal = msg.pose
+        print("New mission goal received! Calculating route...")
+        self.calculate_astar_path()
 
-    # 6. Visualize the Victory
-    plt.figure(figsize=(10, 6))
-    
-    # Show the 3D Depth Occupancy Grid
-    plt.imshow(binary_grid, cmap='binary')
-    
-    plt.plot(start_pos[1], start_pos[0], 'go', markersize=10, label="Drone Start")
-    plt.plot(goal_pos[1], goal_pos[0], 'ro', markersize=10, label="Target Goal")
-    
-    if path:
-        print("Route successfully calculated through 3D space!")
-        route_y = [p[0] for p in path]
-        route_x = [p[1] for p in path]
-        plt.plot(route_x, route_y, 'b-', linewidth=3, label="A* Flight Path")
-    else:
-        print("Mission Abort: No safe path available.")
+    def map_callback(self, msg):
+        self.obstacle_map = msg
+
+    def calculate_astar_path(self):
+        if not self.current_pose or not self.target_goal:
+            rospy.logwarn("Missing VINS data or Goal. Cannot plan path.")
+            return
+
+        # ==========================================
+        # TODO: Insert your A* or RRT logic here!
+        # You will use self.current_pose (start), self.target_goal (end), 
+        # and self.obstacle_map to generate a list of safe waypoints.
+        # ==========================================
+
+        print("Path calculated. Publishing to Flight Controller...")
         
-    plt.title("Master Integration: 3D Stereo Depth + A* Navigation")
-    plt.legend(loc="upper right")
-    plt.show()
+        # Create the ROS Path message
+        safe_route = Path()
+        safe_route.header.stamp = rospy.Time.now()
+        safe_route.header.frame_id = "map"
+        
+        # Example: Adding a calculated waypoint to the path
+        waypoint = PoseStamped()
+        waypoint.pose.position.x = self.target_goal.position.x
+        waypoint.pose.position.y = self.target_goal.position.y
+        safe_route.poses.append(waypoint)
 
-if __name__ == "__main__":
-    run_true_3d_planner()
+        # Broadcast the route to the flight controller
+        self.path_pub.publish(safe_route)
+
+if __name__ == '__main__':
+    try:
+        planner = AutonomousPathPlanner()
+        rospy.spin()
+    except rospy.ROSInterruptException:
+        pass
