@@ -21,27 +21,34 @@ To develop a fully autonomous drone capable of indoor navigation without GPS, ut
 
 ## Project Structure
 ```text
-DRONE_SLAM/
-├── dataset/           # Physical data
-│   └── mav0/          # EuRoC extracted machine hall data
-├── data_loaders/      # Scripts for data loading and syncing
-│   ├── dataset_player.py
-│   └── sync_test.py
-├── perception/        # Camera modules
-│   ├── orb_tracker.py
-│   ├── stereo_depth.py
-│   └── vision_test.py
-├── imu/               # Inertial Measurement Unit
-│   ├── imu_integrator.py
-│   └── imu_plotter.py
-├── planning/          # Map & Path planning
-│   ├── occupancy_mapper.py
-│   └── path_planner.py
-├── localization/      # SLAM algorithms
-│   └── slam_ekf.py
-├── flight_control/    # Physical Drone Control
+Team_include/
+├── CMakeLists.txt                
+├── package.xml                   
+│
+├── launch/
+│   └── autonomous_flight.launch
+│
+├── planning/
+│   ├── path_planner.py
+│   └── occupancy_mapper.py
+│
+├── flight_control/
 │   └── gps_denied_flight.py
-├── run_sensor_fusion.py # main file
-├── README.md
-├── .gitignore
-└── LICENSE
+│
+├── perception/
+│   └── yolo_detector.py
+│
+├── scripts/
+│   └── vins_to_mavros.py     
+│
+├── legacy_prototypes/           
+│   ├── dataset_player.py
+│   ├── slam_ekf.py
+│   ├── optical_flow.py
+│   ├── run_sensor_fusion.py
+│   └── ... (all other old files)
+│
+└── tests/
+    ├── vision_test.py
+    ├── yolo_test.py
+    └── test_mapper_windows.py
