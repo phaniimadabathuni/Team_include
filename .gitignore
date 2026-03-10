@@ -31,3 +31,6 @@ build/
 install/
 log/dataset/ 
 dataset/
+__pycache__/
+.vscode/
+*.pt
