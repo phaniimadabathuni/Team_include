@@ -23,10 +23,9 @@ catkin_package(
 # 4. Install the Python Scripts so ROS can find them
 # This makes your nodes executable automatically
 catkin_install_python(PROGRAMS
-  planning/path_planner.py
-  planning/occupancy_mapper.py
-  flight_control/gps_denied_flight.py
-  perception/yolo_detector.py
+  scripts/yolo_detector.py
+  scripts/path_planner.py
+  scripts/gps_denied_flight.py
   scripts/vins_to_mavros.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
