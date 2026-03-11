@@ -1,13 +1,4 @@
 <launch>
-    <include file="$(find mavros)/launch/node.launch">
-        <arg name="pluginlists_yaml" value="$(find mavros)/launch/px4_pluginlists.yaml" />
-        <arg name="config_yaml" value="$(find mavros)/launch/px4_config.yaml" />
-        <arg name="fcu_url" value="/dev/ttyACM0:57600" /> <arg name="gcs_url" value="" />
-        <arg name="tgt_system" value="1" />
-        <arg name="tgt_component" value="1" />
-        <arg name="log_output" value="screen" />
-    </include>
-
     <node pkg="team_include" type="yolo_detector.py" name="yolo_perception" output="screen">
         <param name="camera_topic" value="/camera/color/image_raw" />
     </node>
