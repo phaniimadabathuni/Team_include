@@ -1,58 +1,44 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 import rospy
-from nav_msgs.msg import Path
-from geometry_msgs.msg import TwistStamped
-from mavros_msgs.srv import SetMode, CommandBool
+from geometry_msgs.msg import PoseStamped
+from nav_msgs.msg import Odometry
+from mavros_msgs.msg import State
 
-class GPSDeniedFlightController:
-    def __init__(self):
-        rospy.init_node('team_include_flight_control', anonymous=True)
+# Global state to track if drone is armed and in offboard mode
+current_state = State()
 
-        # 1. Subscriber: Listening to our custom Path Planner
-        rospy.Subscriber('/team_include/planned_path', Path, self.path_callback)
+def state_cb(msg):
+    global current_state
+    current_state = msg
 
-        # 2. Publisher: Sending physical velocity commands to the Pixhawk via MAVROS
-        self.velocity_pub = rospy.Publisher('/mavros/setpoint_velocity/cmd_vel', TwistStamped, queue_size=10)
+def vins_odom_cb(msg):
+    # TODO for Revanth: Extract the drone's current X, Y, Z from VINS-Fusion
+    pass
 
-        # 3. State Variables
-        self.current_path = None
-        self.rate = rospy.Rate(20) # We must send commands at 20Hz or ArduPilot will trigger a failsafe
+def main():
+    rospy.init_node('flight_control_node', anonymous=True)
 
-        print("Team_include: Flight Controller online. Waiting for safe route...")
+    # Subscribing to Pixhawk status and VINS odometry
+    rospy.Subscriber("/mavros/state", State, state_cb)
+    rospy.Subscriber("/vins_estimator/odometry", Odometry, vins_odom_cb)
 
-    def path_callback(self, msg):
-        self.current_path = msg.poses
-        print(f"Received route with {len(self.current_path)} waypoints. Engaging motors...")
-        self.execute_flight()
+    # Publishing waypoints to the Pixhawk 6C
+    local_pos_pub = rospy.Publisher("/mavros/setpoint_position/local", PoseStamped, queue_size=10)
 
-    def execute_flight(self):
-        if not self.current_path:
-            return
+    # MAVROS requires a continuous stream of setpoints (at least 2Hz, 20Hz is safer)
+    rate = rospy.Rate(20.0) 
 
-        # Grab the immediate next waypoint on the route
-        next_target = self.current_path[0].pose.position
+    rospy.loginfo("Flight Control Node Started. Waiting for OFFBOARD mode...")
 
-        # ==========================================
-        # TODO: Insert your PID Control Logic here!
-        # Compare current VINS position to next_target, 
-        # and calculate how fast to move in X, Y, and Z.
-        # ==========================================
-
-        cmd = TwistStamped()
+    # Main flight loop
+    while not rospy.is_shutdown():
+        # TODO for Revanth: Create a PoseStamped message and publish the next waypoint
+        # Example: local_pos_pub.publish(target_pose)
         
-        # Example: Move forward at 0.5 meters per second
-        cmd.twist.linear.x = 0.5 
-        cmd.twist.linear.y = 0.0
-        cmd.twist.linear.z = 0.0 # Maintain altitude
-        
-        # Keep publishing the velocity command to keep the drone moving
-        while not rospy.is_shutdown():
-            self.velocity_pub.publish(cmd)
-            self.rate.sleep()
+        rate.sleep()
 
 if __name__ == '__main__':
     try:
-        flight_controller = GPSDeniedFlightController()
-        rospy.spin()
+        main()
     except rospy.ROSInterruptException:
         pass
