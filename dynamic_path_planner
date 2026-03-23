@@ -1,0 +1,206 @@
+#!/usr/bin/env python3
+import rospy
+import heapq
+import math
+from geometry_msgs.msg import PoseStamped
+from nav_msgs.msg import Path
+
+### ----------------------------------------------------------------- ###
+### SENSORS TEAM: 1. IMPORT YOUR SPECIFIC MAP MESSAGE TYPE HERE       ###
+### Example: from nav_msgs.msg import OccupancyGrid                   ###
+### Example: from octomap_msgs.msg import Octomap                     ###
+### ----------------------------------------------------------------- ###
+
+
+class DynamicAStarPlanner:
+    def __init__(self):
+        rospy.init_node('dynamic_path_planner', anonymous=True)
+        
+        self.resolution = 1.0  # Grid resolution (meters per cell)
+        
+        # Publisher: Outputs the calculated path for the flight controller
+        self.path_pub = rospy.Publisher('/team_include/planned_path', Path, queue_size=10)
+        
+        ### ----------------------------------------------------------------- ###
+        ### SENSORS TEAM: 2. SET UP YOUR SUBSCRIBERS HERE                     ###
+        ### Change '/sensors/map_topic' to your actual Gazebo map topic       ###
+        ### Change 'Any' to your actual message type (OccupancyGrid, etc.)    ###
+        ### ----------------------------------------------------------------- ###
+        # rospy.Subscriber('/sensors/map_topic', Any, self.map_callback)
+        
+        # Subscriber for the Destination Point
+        rospy.Subscriber('/move_base_simple/goal', PoseStamped, self.goal_callback)
+        
+        rospy.loginfo("A* Planner Ready. Waiting for map and goal data...")
+
+    ### ----------------------------------------------------------------- ###
+    ### SENSORS TEAM: 3. STORE YOUR MAP DATA HERE                         ###
+    ### ----------------------------------------------------------------- ###
+    def map_callback(self, msg):
+        """
+        Extract the obstacle data from your Gazebo map message here.
+        Store it in a class variable (e.g., self.current_map) so the 
+        is_obstacle() function can read it.
+        """
+        pass 
+
+    ### ----------------------------------------------------------------- ###
+    ### SENSORS TEAM: 4. LINK YOUR MAP TO THE COLLISION CHECKER           ###
+    ### ----------------------------------------------------------------- ###
+    def dynamic_path_planning(self):
+        """
+        SOLVES POINT 6: Real-Time Replanning
+        This runs 10 times a second. If a human walks in front of the drone,
+        the map updates, the path breaks, and this recalculates a new route instantly.
+        """
+        # 1. Wait for sensors to wake up
+        if self.current_position is None or self.map_data is None:
+            return 
+            
+        # 2. Define the Target Destination (e.g., Fly 5 meters forward, 5 meters right)
+        # In the future, this will come from a user clicking on a map.
+        goal_x = 5.0
+        goal_y = 5.0
+
+        # 3. Read current location from VINS-Fusion
+        curr_x = self.current_position.x
+        curr_y = self.current_position.y
+
+        # ---------------------------------------------------------
+        # THE BRAIN: Execute the A* Algorithm
+        # ---------------------------------------------------------
+        # (Your design team will drop their specific A* math here, 
+        # ensuring it calls self.is_obstacle(x,y) to check for walls)
+        path = self.run_a_star_logic(curr_x, curr_y, goal_x, goal_y)
+
+        # ---------------------------------------------------------
+        # THE MUSCLES: Translate Path to Motor Commands (SOLVES POINT 7)
+        # ---------------------------------------------------------
+        cmd = Twist() # This is the standard ROS 2 Velocity Message
+
+        if path and len(path) > 1:
+            # Look at the very next step on the A* path
+            next_x, next_y = path[1]
+
+            # Math: Calculate the angle to point the drone at that next step
+            angle_to_target = math.atan2(next_y - curr_y, next_x - curr_x)
+
+            # Command the Motors: 
+            # Fly forward at 0.5 meters/second
+            cmd.linear.x = 0.5 
+            # Rotate towards the target (Simple Proportional Controller)
+            cmd.angular.z = angle_to_target * 0.5 
+            
+        else:
+            # If we reached the goal, or no safe path exists, STOP the motors!
+            cmd.linear.x = 0.0
+            cmd.angular.z = 0.0
+            self.get_logger().info("Destination Reached or Blocked. Hovering.")
+
+        # Fire the electrical signal to the motors
+        self.velocity_pub.publish(cmd)
+
+
+    def run_a_star_logic(self, start_x, start_y, goal_x, goal_y):
+        """
+        Placeholder for the Design Team's A* Math.
+        It should return a list of physical coordinates: [(0,0), (0.1, 0), ...]
+        """
+        # Example of how they must use our obstacle checker inside their loop:
+        # if self.is_obstacle(test_x, test_y):
+        #     continue # Node is a wall, skip it!
+        
+        # For testing, we just return a straight line fake path
+        return [(start_x, start_y), (goal_x, goal_y)]
+
+    # =====================================================================
+    # CORE A* MATH ENGINE (No modification needed below this line)
+    # =====================================================================
+    def heuristic(self, a, b):
+        return math.sqrt((a[0] - b[0])**2 + (a[1] - b[1])**2 + (a[2] - b[2])**2)
+
+    def get_neighbors(self, current):
+        neighbors = []
+        for dx in [-1, 0, 1]:
+            for dy in [-1, 0, 1]:
+                for dz in [-1, 0, 1]:
+                    if dx == 0 and dy == 0 and dz == 0:
+                        continue
+                    neighbors.append((current[0] + dx, current[1] + dy, current[2] + dz))
+        return neighbors
+
+    def a_star_search(self, start, goal):
+        rospy.loginfo(f"Calculating path from {start} to {goal}...")
+        open_set = []
+        heapq.heappush(open_set, (0, start))
+        came_from = {}
+        g_score = {start: 0}
+        f_score = {start: self.heuristic(start, goal)}
+        
+        while open_set:
+            current = heapq.heappop(open_set)[1]
+            
+            if current == goal:
+                path = []
+                while current in came_from:
+                    path.append(current)
+                    current = came_from[current]
+                path.append(start)
+                path.reverse()
+                return path
+                
+            for neighbor in self.get_neighbors(current):
+                if self.is_obstacle(neighbor):
+                    continue
+                
+                tentative_g_score = g_score[current] + self.heuristic(current, neighbor)
+                
+                if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
+                    came_from[neighbor] = current
+                    g_score[neighbor] = tentative_g_score
+                    f_score[neighbor] = tentative_g_score + self.heuristic(neighbor, goal)
+                    heapq.heappush(open_set, (f_score[neighbor], neighbor))
+                    
+        rospy.logwarn("Path completely blocked!")
+        return None
+
+    def goal_callback(self, msg):
+        ### ----------------------------------------------------------------- ###
+        ### SENSORS TEAM: 5. DEFINE THE START AND END POINTS HERE             ###
+        ### ----------------------------------------------------------------- ###
+        # You mentioned starting at roughly 0,0,0
+        start_node = (0, 0, 0) 
+        
+        # Reads the incoming goal topic and converts to grid coordinates
+        goal_x = int(round(msg.pose.position.x / self.resolution))
+        goal_y = int(round(msg.pose.position.y / self.resolution))
+        goal_z = int(round(msg.pose.position.z / self.resolution))
+        goal_node = (goal_x, goal_y, goal_z)
+        
+        # Execute the math
+        path_nodes = self.a_star_search(start_node, goal_node)
+        
+        if path_nodes:
+            self.publish_path(path_nodes)
+
+    def publish_path(self, path_nodes):
+        ros_path = Path()
+        ros_path.header.frame_id = "world"
+        ros_path.header.stamp = rospy.Time.now()
+        
+        for node in path_nodes:
+            pose = PoseStamped()
+            pose.header.frame_id = "world"
+            pose.pose.position.x = node[0] * self.resolution
+            pose.pose.position.y = node[1] * self.resolution
+            pose.pose.position.z = node[2] * self.resolution
+            ros_path.poses.append(pose)
+            
+        self.path_pub.publish(ros_path)
+
+if __name__ == '__main__':
+    try:
+        planner = DynamicAStarPlanner()
+        rospy.spin()
+    except rospy.ROSInterruptException:
+        pass
